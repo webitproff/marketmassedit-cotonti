@@ -5,6 +5,10 @@
 Provides a convenient interface for quick viewing and mass editing of market items.  
 Allows changing titles, aliases, meta tags, categories, prices, statuses, product codes, dates, and any extra fields for multiple items simultaneously.
 
+
+<img width="1536" height="1024" alt="Market Mass Edit — Plugin for Cotonti mass editing product ittems for the Market module" src="https://github.com/user-attachments/assets/6518bcbe-c678-409a-bcf4-b4190d28bffa" />
+
+
 ---
 
 ## Table of Contents
