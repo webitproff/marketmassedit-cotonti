@@ -11,9 +11,9 @@ Hooks=tools
  * Filename: plugins/marketmassedit/marketmassedit.admin.php
  * marketmassedit plugin for Cotonti v1.+, PHP 8.5+, MySQL 8.4
  *
- * Date: Aug 11Th, 2026
+ * Date: Aug 22Th, 2026
  * @package marketmassedit
- * @version 2.0.0
+ * @version 2.1.1
  * @author webitproff
  * @copyright (c) webitproff 2026 | https://github.com/webitproff/marketmassedit-cotonti
  * @license BSD
@@ -69,7 +69,8 @@ if ($tab === 'mainlist') {
     $params = [];
 
     if (!empty($sq)) {
-        $sq_escaped = "%$sq%";
+        // FIX: экранируем % и _ для корректного поиска
+        $sq_escaped = '%' . addcslashes($sq, '%_') . '%';
         if ($search_in == 'title') {
             $sqlwhere .= " AND fieldmrkt_title LIKE :sq";
         } elseif ($search_in == 'full') {
@@ -92,13 +93,14 @@ if ($tab === 'mainlist') {
         }
     }
 
+    // FIX: заменили $db_market на Cot::$db->market
     $total = Cot::$db->query(
-        "SELECT COUNT(*) FROM $db_market WHERE $sqlwhere", $params
+        "SELECT COUNT(*) FROM " . Cot::$db->market . " WHERE $sqlwhere", $params
     )->fetchColumn();
 
     $items = Cot::$db->query(
         "SELECT fieldmrkt_id, fieldmrkt_title, fieldmrkt_cat, fieldmrkt_costdflt, fieldmrkt_cost_usd, fieldmrkt_state
-         FROM $db_market WHERE $sqlwhere
+         FROM " . Cot::$db->market . " WHERE $sqlwhere
          ORDER BY fieldmrkt_id DESC
          LIMIT $d, $perPage",
         $params
@@ -162,30 +164,42 @@ if ($tab === 'mainlist') {
 
 /* ========== Вкладка: Массовое редактирование ========== */
 if ($tab === 'massedit') {
-    // Гарантируем, что массив экстраполей для market существует
-    if (!isset($cot_extrafields[$db_market]) || !is_array($cot_extrafields[$db_market])) {
-        $cot_extrafields[$db_market] = [];
+    // FIX: используем современное обращение к extrafields
+    if (!isset(Cot::$extrafields[Cot::$db->market]) || !is_array(Cot::$extrafields[Cot::$db->market])) {
+        Cot::$extrafields[Cot::$db->market] = [];
     }
     $perPage = (int) Cot::$cfg['plugin']['marketmassedit']['perpage'] ?: 20;
     list($pg, $d, $durl) = cot_import_pagenav('d', $perPage);
 
-    $sq = cot_import('sq', 'G', 'TXT');
+    // Параметры поиска – из POST (скрытые поля) при отправке, иначе из GET
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $sq        = cot_import('sq', 'P', 'TXT');
+        $c         = cot_import('c', 'P', 'TXT');
+        $search_in = cot_import('search_in', 'P', 'ALP');
+        $filter_id = cot_import('filter_id', 'P', 'INT');
+        $filter    = cot_import('filter', 'P', 'ALP');
+    } else {
+        $sq        = cot_import('sq', 'G', 'TXT');
+        $c         = cot_import('c', 'G', 'TXT');
+        $search_in = cot_import('search_in', 'G', 'ALP', 8);
+        $filter_id = cot_import('filter_id', 'G', 'INT');
+        $filter    = cot_import('filter', 'G', 'ALP');
+    }
     $sq = ($sq !== null) ? trim($sq) : '';
-    $c  = cot_import('c', 'G', 'TXT');
-    $search_in = cot_import('search_in', 'G', 'ALP', 8);
     if (!in_array($search_in, ['title', 'full', 'pcod'])) {
         $search_in = 'title';
     }
-    $filter_id = cot_import('filter_id', 'G', 'INT');
-    $filter = cot_import('filter', 'G', 'ALP');
     $filter = empty($filter) ? 'all' : $filter;
-
+	$c = $c ?? '';
+	$search_in = $search_in ?? '';
+	$filter_id = $filter_id ?? '';
+	
     $urlParams = ['m'=>'other', 'p'=>'marketmassedit', 'tab'=>'massedit'];
     if (!empty($sq)) $urlParams['sq'] = $sq;
     if (!empty($c))  $urlParams['c']  = $c;
-    if ($search_in != 'title') $urlParams['search_in'] = $search_in;
     if (!empty($filter_id)) $urlParams['filter_id'] = $filter_id;
-    if ($filter != 'all') $urlParams['filter'] = $filter;
+    $urlParams['search_in'] = $search_in;
+    $urlParams['filter'] = $filter;
 
     // Сохранение изменений
     if ($a === 'update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -204,7 +218,7 @@ if ($tab === 'massedit') {
 
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $currentData = Cot::$db->query(
-            "SELECT * FROM $db_market WHERE fieldmrkt_id IN ($placeholders)", $ids
+            "SELECT * FROM " . Cot::$db->market . " WHERE fieldmrkt_id IN ($placeholders)", $ids
         )->fetchAll(PDO::FETCH_ASSOC | PDO::FETCH_UNIQUE);
 
         $updatedCount = 0;
@@ -246,23 +260,68 @@ if ($tab === 'massedit') {
                 $update['fieldmrkt_date'] = Cot::$sys['now'];
             }
 
-            if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty($cot_extrafields[$db_market])) {
-                foreach ($cot_extrafields[$db_market] as $exfld) {
+            if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty(Cot::$extrafields[Cot::$db->market])) {
+                foreach (Cot::$extrafields[Cot::$db->market] as $exfld) {
                     $fname = $exfld['field_name'];
-                    if (isset($_POST['extra_'.$fname][$id])) {
-                        $newVal = $_POST['extra_'.$fname][$id];
-                        $oldVal = $current['fieldmrkt_'.$fname] ?? null;
-                        if ($newVal != $oldVal) $update['fieldmrkt_'.$fname] = $newVal;
+                    $postKey = 'extra_' . $fname;
+                    $oldVal = $current['fieldmrkt_' . $fname] ?? '';
+
+                    // Обработка файлов
+                    if ($exfld['field_type'] === 'file') {
+                        // Удаление
+                        if (isset($_POST['rdel_' . $postKey][$id]) && $_POST['rdel_' . $postKey][$id] == 1) {
+                            if (!empty($oldVal)) {
+                                cot_extrafield_unlinkfiles($oldVal, $exfld);
+                                $update['fieldmrkt_' . $fname] = '';
+                            }
+                        }
+                        // Загрузка
+                        if (!empty($_FILES[$postKey]['name'][$id]) && $_FILES[$postKey]['error'][$id] !== UPLOAD_ERR_NO_FILE) {
+                            $tmpName = $postKey . '_' . $id . '_tmp';
+                            $singleFile = [
+                                'name'     => $_FILES[$postKey]['name'][$id],
+                                'type'     => $_FILES[$postKey]['type'][$id],
+                                'tmp_name' => $_FILES[$postKey]['tmp_name'][$id],
+                                'error'    => $_FILES[$postKey]['error'][$id],
+                                'size'     => $_FILES[$postKey]['size'][$id],
+                            ];
+                            $oldFiles = $_FILES;
+                            $_FILES[$tmpName] = $singleFile;
+                            $newFileValue = cot_import_extrafields($tmpName, $exfld, 'P', $oldVal, 'market_');
+                            $_FILES = $oldFiles;
+                            if (!cot_error_found() && $newFileValue !== null && $newFileValue !== '') {
+                                if (!empty($oldVal)) {
+                                    cot_extrafield_unlinkfiles($oldVal, $exfld);
+                                }
+                                $update['fieldmrkt_' . $fname] = $newFileValue;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Остальные типы
+                    if (isset($_POST[$postKey][$id])) {
+                        $newVal = $_POST[$postKey][$id];
+                        if (is_array($newVal)) {
+                            $newVal = implode(',', $newVal);
+                        }
+                        if ($newVal != $oldVal) {
+                            $update['fieldmrkt_' . $fname] = $newVal;
+                        }
                     }
                 }
             }
 
             if (!empty($update)) {
                 $update['fieldmrkt_updated'] = Cot::$sys['now'];
-                Cot::$db->update($db_market, $update, "fieldmrkt_id = $id");
+                // FIX: используем плейсхолдеры и Cot::$db->market
+                Cot::$db->update(Cot::$db->market, $update, "fieldmrkt_id = ?", [$id]);
                 $updatedCount++;
             }
         }
+
+        // Перемещаем загруженные файлы после обработки всех товаров
+        cot_extrafield_movefiles();
 
         // Хук для сохранения данных других плагинов (например, xtradbrowmarket)
         /* === Hook === */
@@ -296,7 +355,8 @@ if ($tab === 'massedit') {
     $params = [];
 
     if (!empty($sq)) {
-        $sq_escaped = "%$sq%";
+        // FIX: экранируем % и _
+        $sq_escaped = '%' . addcslashes($sq, '%_') . '%';
         if ($search_in == 'title') {
             $sqlwhere .= " AND fieldmrkt_title LIKE :sq";
         } elseif ($search_in == 'full') {
@@ -317,7 +377,8 @@ if ($tab === 'massedit') {
         }
     }
 
-    $total = Cot::$db->query("SELECT COUNT(*) FROM $db_market WHERE $sqlwhere", $params)->fetchColumn();
+    // FIX: заменили $db_market на Cot::$db->market
+    $total = Cot::$db->query("SELECT COUNT(*) FROM " . Cot::$db->market . " WHERE $sqlwhere", $params)->fetchColumn();
 
     // Динамический набор полей на основе настроек
     $selectFields = ['fieldmrkt_id', 'fieldmrkt_alias'];
@@ -334,8 +395,8 @@ if ($tab === 'massedit') {
         $selectFields[] = 'fieldmrkt_date';
         $selectFields[] = 'fieldmrkt_updated';
     }
-    if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty($cot_extrafields[$db_market])) {
-        foreach ($cot_extrafields[$db_market] as $exfld) {
+    if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty(Cot::$extrafields[Cot::$db->market])) {
+        foreach (Cot::$extrafields[Cot::$db->market] as $exfld) {
             $selectFields[] = 'fieldmrkt_' . $exfld['field_name'];
         }
     }
@@ -359,8 +420,8 @@ if ($tab === 'massedit') {
         }
     }
 
-    // Защита от отсутствующих колонок – только для полей таблицы $db_market
-    $realColumns = Cot::$db->query("SHOW COLUMNS FROM $db_market")->fetchAll(PDO::FETCH_COLUMN);
+    // Защита от отсутствующих колонок – только для полей таблицы market
+    $realColumns = Cot::$db->query("SHOW COLUMNS FROM " . Cot::$db->market)->fetchAll(PDO::FETCH_COLUMN);
     $marketFields = array_intersect($marketFields, $realColumns);
 
     // Объединяем обратно
@@ -369,14 +430,14 @@ if ($tab === 'massedit') {
 
     if ($needXtraJoin) {
         $items = Cot::$db->query(
-            "SELECT $sqlFields FROM $db_market
-             LEFT JOIN $needXtraJoin ON $db_market.fieldmrkt_id = $needXtraJoin.itempagid
+            "SELECT $sqlFields FROM " . Cot::$db->market . "
+             LEFT JOIN $needXtraJoin ON " . Cot::$db->market . ".fieldmrkt_id = $needXtraJoin.itempagid
              WHERE $sqlwhere ORDER BY fieldmrkt_id DESC LIMIT $d, $perPage",
             $params
         )->fetchAll();
     } else {
         $items = Cot::$db->query(
-            "SELECT $sqlFields FROM $db_market WHERE $sqlwhere ORDER BY fieldmrkt_id DESC LIMIT $d, $perPage",
+            "SELECT $sqlFields FROM " . Cot::$db->market . " WHERE $sqlwhere ORDER BY fieldmrkt_id DESC LIMIT $d, $perPage",
             $params
         )->fetchAll();
     }
@@ -410,6 +471,11 @@ if ($tab === 'massedit') {
         'SEARCH_IN_TITLE_CHECKED' => ($search_in == 'title') ? 'checked="checked"' : '',
         'SEARCH_IN_FULL_CHECKED'  => ($search_in == 'full')  ? 'checked="checked"' : '',
         'SEARCH_IN_PCOD_CHECKED'  => ($search_in == 'pcod')  ? 'checked="checked"' : '',
+        'SEARCH_SQ_VALUE'        => htmlspecialchars($sq ?? ''),
+        'SEARCH_C_VALUE'         => htmlspecialchars($c ?? ''),
+        'SEARCH_IN_VALUE'        => htmlspecialchars($search_in ?? ''),
+        'SEARCH_FILTER_ID_VALUE' => htmlspecialchars($filter_id ?? ''),
+        'FILTER_VALUE'           => htmlspecialchars($filter),
     ]);
 
     // Флаги видимости колонок
@@ -438,8 +504,8 @@ if ($tab === 'massedit') {
     /* ===== */
 
     // Заголовки экстраполей
-    if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty($cot_extrafields[$db_market])) {
-        foreach ($cot_extrafields[$db_market] as $exfld) {
+    if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty(Cot::$extrafields[Cot::$db->market])) {
+        foreach (Cot::$extrafields[Cot::$db->market] as $exfld) {
             $t->assign('EXTRA_HEADER_TITLE', htmlspecialchars(cot_extrafield_title($exfld, 'market_')));
             $t->parse('MAIN.EXTRA_HEADER');
         }
@@ -487,8 +553,8 @@ if ($tab === 'massedit') {
             }
             /* ===== */
 
-            if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty($cot_extrafields[$db_market])) {
-                foreach ($cot_extrafields[$db_market] as $exfld) {
+            if (!empty(Cot::$cfg['plugin']['marketmassedit']['show_extrafields']) && !empty(Cot::$extrafields[Cot::$db->market])) {
+                foreach (Cot::$extrafields[Cot::$db->market] as $exfld) {
                     $fname = $exfld['field_name'];
                     $value = $row['fieldmrkt_'.$fname] ?? '';
                     $inputName = 'extra_'.$fname.'['.$id.']';
