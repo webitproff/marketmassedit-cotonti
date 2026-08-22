@@ -173,7 +173,12 @@
 		<!-- IF {SEARCH_RESULT_MSG} --><div class="alert alert-info">{SEARCH_RESULT_MSG}</div><!-- ENDIF -->
 	</div>
 	
-	<form method="post" action="{MANAGE_FORM_URL}">
+	<form method="post" action="{MANAGE_FORM_URL}" enctype="multipart/form-data">
+		<input type="hidden" name="sq" value="{SEARCH_SQ_VALUE}">
+		<input type="hidden" name="c" value="{SEARCH_C_VALUE}">
+		<input type="hidden" name="search_in" value="{SEARCH_IN_VALUE}">
+		<input type="hidden" name="filter_id" value="{SEARCH_FILTER_ID_VALUE}">
+		<input type="hidden" name="filter" value="{FILTER_VALUE}">
 		<div class="table-responsive">
 			<table class="table table-bordered align-middle">
 				<thead>
@@ -238,4 +243,21 @@
 	</form>
 	<!-- ENDIF -->
 </div>
+<style>
+    .table-responsive {
+	overflow-x: auto !important;
+	display: block !important;
+	width: 100% !important;
+    }
+    .table {
+	width: max-content !important;
+	min-width: 100% !important;
+	table-layout: auto !important;
+	white-space: nowrap !important;
+    }
+    .table th,
+    .table td {
+	white-space: nowrap !important;
+    }
+</style>
 <!-- END: MAIN -->
